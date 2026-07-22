@@ -1,0 +1,18 @@
+# Core numerics / modelling
+numpy>=1.26
+pandas>=2.2
+torch>=2.2
+
+# Market data ingestion
+yfinance>=0.2.55
+lxml>=5.0          # HTML table parsing for index-constituent rosters
+requests>=2.32
+
+# On-disk caching of raw and cleaned panels
+pyarrow>=15.0      # parquet engine for the raw OHLCV cache
+
+# Config + CLI
+PyYAML>=6.0
+
+# Dev / test
+pytest>=8.0

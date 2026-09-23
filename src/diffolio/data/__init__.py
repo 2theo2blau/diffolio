@@ -1,4 +1,4 @@
-"""Data ingestion for Diffolio (plan sections 1-4).
+"""Data ingestion for Diffolio (plan sections 1-5).
 
 The pipeline is a straight line::
 
@@ -7,7 +7,9 @@ The pipeline is a straight line::
       ->  clean.align_frames  ->  features.build_feature_tensors
       ->  panel.MarketPanel   ->  splits.make_splits
 
-``pipeline.build_dataset`` runs all of it and caches the result.
+``pipeline.build_dataset`` runs all of it and caches the result, and
+``windows.WindowDataset`` turns one split into per-step ``(h, g, r)`` samples
+(plan section 5).
 """
 
 from .clean import AlignedFrames, CleaningReport, align_frames, build_calendar, detect_anomalies
@@ -16,6 +18,7 @@ from .features import FeatureBuilder, FeatureStats, build_feature_tensors
 from .panel import MarketPanel, PanelTensors, compute_open_to_open_returns
 from .pipeline import Dataset, build_dataset, default_output_dir, load_dataset
 from .splits import Split, SplitIndices, compute_split_bounds, make_splits
+from .windows import WindowDataset, WindowSample, stack_windows, window_dataset
 from .universe import (
     ScreenResult,
     Universe,
@@ -38,6 +41,8 @@ __all__ = [
     "Split",
     "SplitIndices",
     "Universe",
+    "WindowDataset",
+    "WindowSample",
     "align_frames",
     "build_calendar",
     "build_dataset",
@@ -54,4 +59,6 @@ __all__ = [
     "make_splits",
     "normalize_ticker",
     "screen_candidates",
+    "stack_windows",
+    "window_dataset",
 ]

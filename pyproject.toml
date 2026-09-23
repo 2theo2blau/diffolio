@@ -21,4 +21,7 @@ dependencies = { file = ["requirements.txt"] }
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "network: touches the real provider; opt in with DIFFOLIO_NETWORK_TESTS=1",
+]
 filterwarnings = ["ignore::DeprecationWarning"]

@@ -9,5 +9,5 @@ dist/
 .env
 
 # Downloaded and derived market data
-./data/
+data/
 !/data/.gitkeep

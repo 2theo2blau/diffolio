@@ -51,6 +51,9 @@ class Dataset:
     universe: Universe
     config: DiffolioConfig
     report: dict[str, Any]
+    #: Directory the dataset was built into / loaded from; derived artefacts
+    #: (e.g. the section-6 portfolio targets) are cached beneath it.
+    root: Path | None = None
 
     @property
     def n_assets(self) -> int:
@@ -166,7 +169,14 @@ def build_dataset(
 
     _persist(output_dir, config, panel, splits, universe, report, screen, aligned)
     logger.info("dataset ready:\n%s", f"{panel.describe()}\n{splits.describe(panel.calendar)}")
-    return Dataset(panel=panel, splits=splits, universe=universe, config=config, report=report)
+    return Dataset(
+        panel=panel,
+        splits=splits,
+        universe=universe,
+        config=config,
+        report=report,
+        root=output_dir,
+    )
 
 
 def load_dataset(
@@ -209,6 +219,7 @@ def _try_load(
         universe=Universe.load(output_dir / _UNIVERSE_FILE),
         config=config,
         report=read_json(report_path) if report_path.exists() else {},
+        root=output_dir,
     )
 
 

@@ -1,4 +1,4 @@
-"""Data ingestion for Diffolio (plan sections 1-5).
+"""Data ingestion for Diffolio (plan sections 1-6).
 
 The pipeline is a straight line::
 
@@ -9,7 +9,8 @@ The pipeline is a straight line::
 
 ``pipeline.build_dataset`` runs all of it and caches the result, and
 ``windows.WindowDataset`` turns one split into per-step ``(h, g, r)`` samples
-(plan section 5).
+(plan section 5); ``targets`` adds the risk-dependent pseudo-optimal
+portfolios the diffusion model learns to denoise towards (plan section 6).
 """
 
 from .clean import AlignedFrames, CleaningReport, align_frames, build_calendar, detect_anomalies
@@ -19,6 +20,14 @@ from .panel import MarketPanel, PanelTensors, compute_open_to_open_returns
 from .pipeline import Dataset, build_dataset, default_output_dir, load_dataset
 from .splits import Split, SplitIndices, compute_split_bounds, make_splits
 from .windows import WindowDataset, WindowSample, stack_windows, window_dataset
+from .targets import (
+    PortfolioDataset,
+    PortfolioSample,
+    PortfolioTargets,
+    build_targets,
+    compute_targets,
+    portfolio_dataset,
+)
 from .universe import (
     ScreenResult,
     Universe,
@@ -36,6 +45,9 @@ __all__ = [
     "FeatureStats",
     "MarketPanel",
     "PanelTensors",
+    "PortfolioDataset",
+    "PortfolioSample",
+    "PortfolioTargets",
     "PriceCache",
     "ScreenResult",
     "Split",
@@ -47,9 +59,11 @@ __all__ = [
     "build_calendar",
     "build_dataset",
     "build_feature_tensors",
+    "build_targets",
     "build_universe",
     "compute_open_to_open_returns",
     "compute_split_bounds",
+    "compute_targets",
     "default_output_dir",
     "detect_anomalies",
     "download_benchmark",
@@ -58,6 +72,7 @@ __all__ = [
     "load_dataset",
     "make_splits",
     "normalize_ticker",
+    "portfolio_dataset",
     "screen_candidates",
     "stack_windows",
     "window_dataset",

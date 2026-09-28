@@ -29,8 +29,9 @@ from .universe import (
     build_universe,
     load_candidate_roster,
     normalize_ticker,
+    rank_eligible,
     screen_candidates,
-    subset_universe,
+    with_tickers,
 )
 
 logger = get_logger(__name__)
@@ -120,15 +121,9 @@ def build_dataset(
     )
     universe = build_universe(screen, config.universe, start=start, end=end)
 
-    aligned = align_frames(
-        {t: frames[t] for t in universe.tickers},
-        benchmark=benchmark_frame,
-        data_config=config.data,
-        universe_config=config.universe,
-        start=start,
-        end=end,
+    aligned, universe = _align_with_refill(
+        frames, universe, screen, benchmark_frame, config
     )
-    universe = subset_universe(universe, aligned.tickers)
     if universe.size < 2:
         raise RuntimeError(f"only {universe.size} asset(s) survived cleaning")
 
@@ -230,6 +225,77 @@ def _candidate_tickers(config: DiffolioConfig, cache_dir: str, force: bool) -> l
     candidates = sorted({*roster, *forced} - excluded)
     logger.info("universe candidates: %d tickers", len(candidates))
     return candidates
+
+
+def _align_with_refill(
+    frames: dict[str, pd.DataFrame],
+    universe: Universe,
+    screen,
+    benchmark_frame: pd.DataFrame,
+    config: DiffolioConfig,
+):
+    """Clean the universe, replacing assets that cleaning drops.
+
+    Cleaning can reject an asset the screen accepted (a leading gap, an
+    anomaly).  Rather than silently shrinking ``N``, each dropped asset is
+    replaced by the next eligible ticker in the screen's liquidity ranking, and
+    the enlarged set is re-aligned, until the universe is back at
+    ``target_size`` or the eligible reserve is exhausted.  Re-aligning the whole
+    set (not just the newcomers) keeps the calendar a function of the final
+    universe, which matters for ``calendar_mode=intersection``.
+    """
+    reserve = [t for t in rank_eligible(screen, config.universe) if t not in universe]
+    tickers = list(universe.tickers)
+    dropped: dict[str, str] = {}
+    anomalies: list[pd.DataFrame] = []
+    refilled: list[str] = []
+
+    while True:
+        aligned = align_frames(
+            {t: frames[t] for t in tickers},
+            benchmark=benchmark_frame,
+            data_config=config.data,
+            universe_config=config.universe,
+            start=config.data.start,
+            end=config.data.end,
+        )
+        dropped.update(aligned.report.dropped)
+        if aligned.report.anomalies is not None:
+            anomalies.append(aligned.report.anomalies)
+        lost = len(tickers) - len(aligned.tickers)
+        if lost == 0 or not reserve:
+            break
+        additions, reserve = reserve[:lost], reserve[lost:]
+        logger.info(
+            "cleaning dropped %d asset(s); refilling from the eligible reserve: %s",
+            lost,
+            ", ".join(additions),
+        )
+        refilled.extend(additions)
+        tickers = list(aligned.tickers) + additions
+
+    if dropped and not reserve and len(aligned.tickers) < len(universe.tickers):
+        logger.warning(
+            "eligible reserve exhausted; universe is %d assets, below the %d selected",
+            len(aligned.tickers),
+            len(universe.tickers),
+        )
+
+    # The last pass only saw the final set; keep every pass's drops/anomalies
+    # in the report so diagnostics/ still explains each rejection.
+    aligned.report.dropped = dropped
+    aligned.report.n_input_assets = len(aligned.tickers) + len(dropped)
+    if anomalies:
+        merged = pd.concat(anomalies)
+        aligned.report.anomalies = merged[~merged.index.duplicated(keep="last")].sort_index()
+
+    universe = with_tickers(
+        universe,
+        aligned.tickers,
+        dropped_in_cleaning=sorted(dropped),
+        refilled_from_reserve=refilled,
+    )
+    return aligned, universe
 
 
 def _assemble_panel(

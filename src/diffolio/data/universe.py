@@ -11,7 +11,9 @@ order for every tensor downstream.
 from __future__ import annotations
 
 import datetime as dt
+import io
 import re
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
@@ -26,6 +28,9 @@ logger = get_logger(__name__)
 #: How many calendar days of slack to allow when checking that an asset was
 #: listed for the entire study period (holidays, first-day-of-year effects).
 LISTING_GRACE_DAYS = 7
+
+#: Wikipedia's robot policy asks clients to identify themselves.
+_USER_AGENT = "diffolio/0.1 (research; S&P roster download)"
 
 _WIKI_ROSTERS: dict[str, tuple[str, str]] = {
     # name -> (wikipedia url, column holding the ticker)
@@ -186,7 +191,12 @@ def _roster_from_wikipedia(
         return pd.read_csv(cache_path)["ticker"].astype(str).tolist()
 
     logger.info("fetching roster %s from %s", name, url)
-    tables = pd.read_html(url)
+    # Wikipedia answers 403 to urllib's default User-Agent, so fetch the page
+    # with a descriptive one and hand the HTML to pandas.
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        html = response.read().decode("utf-8")
+    tables = pd.read_html(io.StringIO(html))
     for table in tables:
         if column in table.columns:
             tickers = table[column].dropna().astype(str).tolist()
@@ -319,11 +329,7 @@ def build_universe(
         )
 
     if config.target_size is not None and len(eligible) > config.target_size:
-        liquidity = screen.report.loc[eligible, "median_dollar_volume"]
-        forced = [t for t in (normalize_ticker(x) for x in config.include) if t in eligible]
-        ranked = [t for t in liquidity.sort_values(ascending=False).index if t not in forced]
-        keep = forced + ranked[: max(config.target_size - len(forced), 0)]
-        eligible = sorted(keep)
+        eligible = sorted(rank_eligible(screen, config)[: config.target_size])
         logger.info("cut universe to target size N=%d by median dollar volume", len(eligible))
     else:
         eligible = sorted(eligible)
@@ -346,6 +352,38 @@ def build_universe(
         end=end,
         criteria=criteria,
         created_at=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+def rank_eligible(screen: ScreenResult, config: UniverseConfig) -> list[str]:
+    """Eligible tickers in selection order: forced ``include`` names first,
+    then the rest by descending median dollar volume (ties by ticker).
+
+    ``build_universe`` keeps the first ``target_size`` of these; the remainder
+    is the reserve the pipeline refills from when cleaning drops an asset.
+    """
+    eligible = list(screen.eligible)
+    forced = [t for t in (normalize_ticker(x) for x in config.include) if t in eligible]
+    liquidity = screen.report.loc[sorted(eligible), "median_dollar_volume"]
+    ranked = [
+        t for t in liquidity.sort_values(ascending=False, kind="stable").index if t not in forced
+    ]
+    return forced + ranked
+
+
+def with_tickers(universe: Universe, tickers: Sequence[str], **criteria: Any) -> Universe:
+    """Re-emit ``universe`` with a new ticker set (canonically sorted) and
+    extra ``criteria`` entries."""
+    merged = dict(universe.criteria)
+    merged.update(criteria)
+    return Universe(
+        market=universe.market,
+        benchmark=universe.benchmark,
+        tickers=tuple(sorted(tickers)),
+        start=universe.start,
+        end=universe.end,
+        criteria=merged,
+        created_at=universe.created_at,
     )
 
 

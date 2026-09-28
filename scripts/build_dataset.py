@@ -21,6 +21,7 @@ if str(REPO_ROOT / "src") not in sys.path:
 from diffolio.config import DiffolioConfig, merge_overrides  # noqa: E402
 from diffolio.data.pipeline import build_dataset, default_output_dir  # noqa: E402
 from diffolio.data.targets import build_targets  # noqa: E402
+from diffolio.diffusion import fit_schedule  # noqa: E402
 from diffolio.utils import setup_logging  # noqa: E402
 
 
@@ -63,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(dataset.describe())
     print(f"portfolio targets: gamma_max={targets.gamma_max}, k_gamma={list(targets.risk_sizes)}")
+    print(fit_schedule(config.diffusion, targets, dataset.splits.train).describe())
     print(f"\nwritten to {output_dir}")
     return 0
 

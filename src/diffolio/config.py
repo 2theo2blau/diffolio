@@ -141,10 +141,17 @@ class SplitConfig:
 class DiffusionConfig:
     """Sections 6-7 and 12 - diffusion schedule and risk levels."""
 
-    num_steps: int = 500  # T
+    num_steps: int = 500  # T; the paper's grid is {100, 300, 500}
     beta_schedule: Literal["linear", "cosine"] = "linear"
+    #: Linear-schedule endpoints (ignored by ``cosine``).
     beta_start: float = 1.0e-4
     beta_end: float = 0.02
+    #: The ``s`` offset of the cosine schedule (Nichol & Dhariwal).
+    cosine_offset: float = 0.008
+    #: What sigma_x is estimated over (training split only).  ``base`` is the
+    #: paper's definition, the Eq. (12) portfolios x^(tau); ``risk_targets``
+    #: pools the per-gamma targets x^(tau, gamma) instead - a flagged deviation.
+    sigma_x_source: Literal["base", "risk_targets"] = "base"
     #: Number of risk levels; gamma ranges over 0 .. gamma_max - 1 and sets
     #: k_gamma = floor(N / gamma_max) * (gamma_max - gamma) (Eq. 16).
     gamma_max: int = 5
@@ -263,6 +270,16 @@ class DiffolioConfig:
             raise ValueError("data.start must precede data.end")
         if self.universe.target_size is not None and self.universe.target_size < 2:
             raise ValueError("universe.target_size must be >= 2")
+        if self.diffusion.num_steps < 1:
+            raise ValueError("diffusion.num_steps must be >= 1")
+        if self.diffusion.beta_schedule not in ("linear", "cosine"):
+            raise ValueError("diffusion.beta_schedule must be 'linear' or 'cosine'")
+        if self.diffusion.beta_schedule == "linear" and not (
+            0.0 < self.diffusion.beta_start <= self.diffusion.beta_end < 1.0
+        ):
+            raise ValueError("diffusion needs 0 < beta_start <= beta_end < 1")
+        if self.diffusion.sigma_x_source not in ("base", "risk_targets"):
+            raise ValueError("diffusion.sigma_x_source must be 'base' or 'risk_targets'")
         if self.diffusion.gamma_max < 2:
             # zeta = 1 - gamma / (gamma_max - 1) needs at least two risk levels.
             raise ValueError("diffusion.gamma_max must be >= 2")
@@ -299,8 +316,32 @@ def _from_dict(cls: type, data: Any) -> Any:
         elif isinstance(value, (list, tuple)):
             kwargs[key] = list(value)
         else:
-            kwargs[key] = value
+            kwargs[key] = _coerce_scalar(hint, value, f"{cls.__name__}.{key}")
     return cls(**kwargs)
+
+
+def _coerce_scalar(hint: Any, value: Any, where: str) -> Any:
+    """Cast ``value`` to a ``float``/``int`` field's declared type.
+
+    PyYAML implements YAML 1.1, where an exponent needs a sign: ``5.0e6`` loads
+    as the *string* ``"5.0e6"`` while ``5.0e+6`` loads as a float.  Coercing
+    by the dataclass annotation makes both spellings work.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    args = typing.get_args(hint)
+    types = set(args) if args else {hint}
+    if float in types and isinstance(value, (str, int)):
+        try:
+            return float(value)
+        except ValueError:
+            raise ValueError(f"{where} expects a number, got {value!r}") from None
+    if int in types and float not in types and isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(f"{where} expects an integer, got {value!r}") from None
+    return value
 
 
 def merge_overrides(config: DiffolioConfig, overrides: Sequence[str]) -> DiffolioConfig:
@@ -322,5 +363,8 @@ def merge_overrides(config: DiffolioConfig, overrides: Sequence[str]) -> Diffoli
         value = yaml.safe_load(raw)
         if isinstance(getattr(target, leaf), str) and not isinstance(value, str):
             value = raw  # e.g. dates, which YAML would otherwise coerce
+        elif dataclasses.is_dataclass(target):
+            hint = typing.get_type_hints(type(target))[leaf]
+            value = _coerce_scalar(hint, value, dotted)
         setattr(target, leaf, value)
     return merged

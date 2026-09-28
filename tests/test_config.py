@@ -88,3 +88,17 @@ def test_cli_overrides_are_typed():
     assert config.data.end == "2020-12-31"
     assert config.universe.target_size == 50
     assert config.features.standardize is False
+
+
+def test_gamma_max_is_validated():
+    import pytest
+
+    config = DiffolioConfig()
+    config.diffusion.gamma_max = 1
+    with pytest.raises(ValueError, match="gamma_max"):
+        config.validate()
+
+    config = DiffolioConfig()
+    config.universe.target_size = 4  # < gamma_max = 5
+    with pytest.raises(ValueError, match="gamma_max"):
+        config.validate()

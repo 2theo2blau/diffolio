@@ -1,8 +1,8 @@
 """Diffolio - risk-dependent diffusion portfolio generation.
 
-Currently implemented: plan sections 1-5 (universe selection, price
-acquisition, cleaning/alignment, the chronological split, and sliding
-window construction).
+Currently implemented: plan sections 1-6 (universe selection, price
+acquisition, cleaning/alignment, the chronological split, sliding window
+construction, and risk-dependent pseudo-optimal portfolio synthesis).
 """
 
 from .config import DiffolioConfig

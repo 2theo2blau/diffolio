@@ -139,12 +139,14 @@ class SplitConfig:
 
 @dataclass
 class DiffusionConfig:
-    """Section 7 - consumed by later components."""
+    """Sections 6-7 and 12 - diffusion schedule and risk levels."""
 
     num_steps: int = 500  # T
     beta_schedule: Literal["linear", "cosine"] = "linear"
     beta_start: float = 1.0e-4
     beta_end: float = 0.02
+    #: Number of risk levels; gamma ranges over 0 .. gamma_max - 1 and sets
+    #: k_gamma = floor(N / gamma_max) * (gamma_max - gamma) (Eq. 16).
     gamma_max: int = 5
 
 
@@ -261,6 +263,17 @@ class DiffolioConfig:
             raise ValueError("data.start must precede data.end")
         if self.universe.target_size is not None and self.universe.target_size < 2:
             raise ValueError("universe.target_size must be >= 2")
+        if self.diffusion.gamma_max < 2:
+            # zeta = 1 - gamma / (gamma_max - 1) needs at least two risk levels.
+            raise ValueError("diffusion.gamma_max must be >= 2")
+        if (
+            self.universe.target_size is not None
+            and self.universe.target_size < self.diffusion.gamma_max
+        ):
+            raise ValueError(
+                "universe.target_size must be >= diffusion.gamma_max so that every "
+                "risk level holds at least floor(N / gamma_max) >= 1 asset"
+            )
 
 
 def _from_dict(cls: type, data: Any) -> Any:

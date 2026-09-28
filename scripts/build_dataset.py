@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build the Diffolio dataset (plan sections 1-4) from a config file.
+"""Build the Diffolio dataset (plan sections 1-4) and its portfolio targets (6).
 
 Examples::
 
@@ -20,6 +20,7 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 from diffolio.config import DiffolioConfig, merge_overrides  # noqa: E402
 from diffolio.data.pipeline import build_dataset, default_output_dir  # noqa: E402
+from diffolio.data.targets import build_targets  # noqa: E402
 from diffolio.utils import setup_logging  # noqa: E402
 
 
@@ -57,8 +58,11 @@ def main(argv: list[str] | None = None) -> int:
         force_download=args.force_download,
     )
 
+    targets = build_targets(dataset, force=args.force)
+
     print()
     print(dataset.describe())
+    print(f"portfolio targets: gamma_max={targets.gamma_max}, k_gamma={list(targets.risk_sizes)}")
     print(f"\nwritten to {output_dir}")
     return 0
 

@@ -102,3 +102,21 @@ def test_gamma_max_is_validated():
     config.universe.target_size = 4  # < gamma_max = 5
     with pytest.raises(ValueError, match="gamma_max"):
         config.validate()
+
+
+def test_unsigned_exponents_load_as_numbers():
+    # YAML 1.1 reads 5.0e6 as a string; the loader must coerce by field type.
+    config = DiffolioConfig.from_dict(
+        {"universe": {"min_avg_dollar_volume": "5.0e6", "target_size": "224"}}
+    )
+    assert config.universe.min_avg_dollar_volume == 5.0e6
+    assert config.universe.target_size == 224
+
+    merged = merge_overrides(DiffolioConfig(), ["diffusion.beta_start=2e-4"])
+    assert merged.diffusion.beta_start == 2e-4
+
+
+def test_the_shipped_config_has_numeric_fields():
+    config = DiffolioConfig.from_yaml(Path(__file__).parents[1] / "configs" / "us_sp500.yaml")
+    assert isinstance(config.universe.min_avg_dollar_volume, float)
+    assert isinstance(config.training.learning_rate, float)

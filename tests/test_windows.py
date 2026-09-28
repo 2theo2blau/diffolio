@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
-from unittest import mock
 
 import numpy as np
+import pytest
 import torch
 from torch.utils.data import DataLoader
 
@@ -18,22 +17,21 @@ from diffolio.data.windows import (
     stack_windows,
     window_dataset,
 )
-from synthetic import make_ohlcv, make_universe_frames, trading_days
-
-from test_panel import make_panel
 
 LOOKBACK = 10
 
 
-def _panel_and_splits(n_days=300, n_assets=4, lookback=LOOKBACK):
-    panel = make_panel(n_days=n_days, n_assets=n_assets)
+@pytest.fixture
+def panel_and_splits(real_subpanel):
+    """300 real trading days of the first 4 real assets, split with L = 10."""
+    panel = real_subpanel(n_days=300, n_assets=4)
     config = DiffolioConfig()
-    config.window.lookback = lookback
+    config.window.lookback = LOOKBACK
     return panel, make_splits(panel, config)
 
 
-def test_samples_match_the_panel_window_primitive():
-    panel, splits = _panel_and_splits()
+def test_samples_match_the_panel_window_primitive(panel_and_splits):
+    panel, splits = panel_and_splits
     ds = WindowDataset(panel, splits.train, LOOKBACK)
 
     assert len(ds) == splits.train.n_samples
@@ -67,8 +65,8 @@ def test_samples_match_the_panel_window_primitive():
         )
 
 
-def test_dataloader_collates_samples_into_batched_tensors():
-    panel, splits = _panel_and_splits()
+def test_dataloader_collates_samples_into_batched_tensors(panel_and_splits):
+    panel, splits = panel_and_splits
     ds = WindowDataset(panel, splits.train, LOOKBACK)
     loader = DataLoader(ds, batch_size=7, shuffle=False)
 
@@ -88,8 +86,8 @@ def test_dataloader_collates_samples_into_batched_tensors():
         torch.testing.assert_close(batch.r_valid[row], ds[row].r_valid)
 
 
-def test_shuffled_loader_with_workers_covers_every_step_once():
-    panel, splits = _panel_and_splits()
+def test_shuffled_loader_with_workers_covers_every_step_once(panel_and_splits):
+    panel, splits = panel_and_splits
     ds = WindowDataset(panel, splits.train, LOOKBACK)
     loader = DataLoader(ds, batch_size=16, shuffle=True, num_workers=2)
 
@@ -102,8 +100,8 @@ def test_shuffled_loader_with_workers_covers_every_step_once():
     assert sorted(seen) == splits.train.tau.tolist()
 
 
-def test_stack_windows_matches_itemwise_slicing():
-    panel, splits = _panel_and_splits()
+def test_stack_windows_matches_itemwise_slicing(panel_and_splits):
+    panel, splits = panel_and_splits
     ds = WindowDataset(panel, splits.train, LOOKBACK)
     taus = splits.train.tau[::5]
 
@@ -129,8 +127,8 @@ def test_stack_windows_matches_itemwise_slicing():
     assert subset.tau.tolist() == splits.train.tau[[3, 1, 0]].tolist()
 
 
-def test_out_of_range_steps_are_rejected():
-    panel, splits = _panel_and_splits()
+def test_out_of_range_steps_are_rejected(panel_and_splits):
+    panel, splits = panel_and_splits
     n_days = panel.n_days
     # A usable step needs the window [tau-L+1, tau] and the target leg tau+1.
     for bad in ([LOOKBACK - 2], [0], [n_days - 1], [LOOKBACK - 1, n_days - 1]):
@@ -152,8 +150,8 @@ def test_out_of_range_steps_are_rejected():
     WindowDataset(panel, [LOOKBACK - 1, n_days - 2], LOOKBACK)
 
 
-def test_a_panel_tensors_view_is_accepted_and_checked():
-    panel, splits = _panel_and_splits()
+def test_a_panel_tensors_view_is_accepted_and_checked(panel_and_splits):
+    panel, splits = panel_and_splits
     from_view = WindowDataset(panel.torch(), splits.train, LOOKBACK)
     from_panel = WindowDataset(panel, splits.train, LOOKBACK)
     torch.testing.assert_close(from_view[0].h, from_panel[0].h)
@@ -170,8 +168,8 @@ def test_a_panel_tensors_view_is_accepted_and_checked():
         raise AssertionError("expected a shape mismatch to raise")
 
 
-def test_an_empty_step_list_yields_an_empty_dataset():
-    panel, splits = _panel_and_splits()
+def test_an_empty_step_list_yields_an_empty_dataset(panel_and_splits):
+    panel, splits = panel_and_splits
     ds = WindowDataset(panel, np.empty(0, dtype=np.int64), LOOKBACK)
 
     assert len(ds) == 0
@@ -181,53 +179,13 @@ def test_an_empty_step_list_yields_an_empty_dataset():
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: sections 1-4 build -> section 5 window dataset.
+# End-to-end: sections 1-4 build (from real cached bars) -> section 5 windows.
 
 
-TICKERS = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
-N_DAYS = 400
-CALENDAR = trading_days(periods=N_DAYS)
-
-
-def _pipeline_config(tmp: str) -> DiffolioConfig:
-    config = DiffolioConfig()
-    config.name = "synthetic"
-    config.universe.roster = "list:" + ",".join(TICKERS)
-    config.universe.benchmark = "^TEST"
-    config.universe.target_size = None
-    config.universe.min_avg_dollar_volume = 0.0
-    config.data.start = str(CALENDAR[0].date())
-    config.data.end = str(CALENDAR[-1].date())
-    config.data.cache_dir = str(Path(tmp) / "cache")
-    config.features.ref_window = 5
-    config.window.lookback = LOOKBACK
-    return config
-
-
-def _fake_provider():
-    index = CALENDAR
-    frames = make_universe_frames(TICKERS, index)
-    benchmark = make_ohlcv(index, seed=123, price0=2000.0)
-
-    def download_ohlcv(tickers, *args, **kwargs):
-        return {t: frames[t] for t in tickers if t in frames}
-
-    def download_benchmark(symbol, *args, **kwargs):
-        return benchmark
-
-    stack = ExitStack()
-    stack.enter_context(mock.patch("diffolio.data.pipeline.download_ohlcv", download_ohlcv))
-    stack.enter_context(
-        mock.patch("diffolio.data.pipeline.download_benchmark", download_benchmark)
-    )
-    return stack
-
-
-def test_windows_from_a_built_dataset_end_to_end():
+def test_windows_from_a_built_dataset_end_to_end(real_pipeline_config):
     with tempfile.TemporaryDirectory() as tmp:
-        with _fake_provider():
-            config = _pipeline_config(tmp)
-            dataset = build_dataset(config, output_dir=Path(tmp) / "out")
+        config = real_pipeline_config()
+        dataset = build_dataset(config, output_dir=Path(tmp) / "out")
 
         expected_h = (dataset.n_assets, config.lookback, config.num_features)
         for split in ("train", "val", "test"):

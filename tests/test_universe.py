@@ -14,7 +14,6 @@ from diffolio.data.universe import (
     screen_candidates,
     subset_universe,
 )
-from synthetic import make_ohlcv, trading_days
 
 
 def test_normalize_ticker_maps_share_classes_to_yahoo():
@@ -50,84 +49,86 @@ def _screen_config(**kwargs) -> UniverseConfig:
     return UniverseConfig(**defaults)
 
 
-def test_screen_rejects_penny_illiquid_late_and_sparse():
-    index = trading_days(periods=200)
-    frames = {
-        "GOOD": make_ohlcv(index, seed=1, price0=100.0, volume=5.0e6),
-        "PENNY": make_ohlcv(index, seed=2, price0=0.4, volume=5.0e8),
-        "THIN": make_ohlcv(index, seed=3, price0=100.0, volume=100.0),
-        "LATE": make_ohlcv(index[80:], seed=4, price0=100.0, volume=5.0e6),
-        "SPARSE": make_ohlcv(index, seed=5, price0=100.0, volume=5.0e6).iloc[::2],
-    }
-    start, end = str(index[0].date()), str(index[-1].date())
+def test_screen_rejects_penny_illiquid_late_and_sparse(real_frames):
+    # Real stocks in each role, with thresholds set relative to them over
+    # mid-2010 .. mid-2011: F (~$6) is a "penny stock" under min_price=10,
+    # NVR (~$26M/day) is illiquid under a $100M floor, KMI listed in Feb 2011.
+    # (Not AAPL: split-adjusted, it traded under $10 then too.)
+    start, end = "2010-06-01", "2011-06-30"
+    frames = real_frames(["JPM", "F", "NVR", "KMI", "MSFT", "^GSPC"], start, end)
+    benchmark = frames.pop("^GSPC")
+    frames["MSFT"] = frames["MSFT"].iloc[::2]  # injected: no real stock is this sparse
+    config = _screen_config(min_price=10.0, min_avg_dollar_volume=1.0e8)
 
-    result = screen_candidates(
-        frames, _screen_config(), start=start, end=end, reference_days=len(index)
-    )
+    result = screen_candidates(frames, config, start=start, end=end, reference_days=len(benchmark))
 
     status = result.report["status"].to_dict()
-    assert status["GOOD"] == "eligible"
-    assert status["PENNY"] == "penny_stock"
-    assert status["THIN"] == "illiquid"
-    assert status["LATE"] == "late_listing"
-    assert status["SPARSE"] == "sparse"
-    assert result.eligible == ["GOOD"]
+    assert status["JPM"] == "eligible"
+    assert status["F"] == "penny_stock"
+    assert status["NVR"] == "illiquid"
+    assert status["KMI"] == "late_listing"
+    assert status["MSFT"] == "sparse"
+    assert result.eligible == ["JPM"]
 
 
-def test_include_and_exclude_override_the_screen():
-    index = trading_days(periods=120)
-    frames = {
-        "KEEP": make_ohlcv(index, seed=1, price0=100.0, volume=5.0e6),
-        "TINY": make_ohlcv(index, seed=2, price0=100.0, volume=10.0),
-        "BANNED": make_ohlcv(index, seed=3, price0=100.0, volume=5.0e6),
-    }
-    config = _screen_config(include=["TINY"], exclude=["BANNED"])
-    result = screen_candidates(
-        frames,
-        config,
-        start=str(index[0].date()),
-        end=str(index[-1].date()),
-        reference_days=len(index),
-    )
-    assert sorted(result.eligible) == ["KEEP", "TINY"]
-    assert result.report.loc["BANNED", "status"] == "excluded"
+def test_real_screen_statistics_match_the_bars(real_frames):
+    start, end = "2018-01-01", "2018-12-31"
+    frames = real_frames(["AAPL", "JPM"], start, end)
+    result = screen_candidates(frames, _screen_config(), start=start, end=end)
+    for ticker, frame in frames.items():
+        row = result.report.loc[ticker]
+        assert row["rows"] == len(frame) == 251
+        assert row["median_dollar_volume"] == (frame["close"] * frame["volume"]).median()
+        assert row["status"] == "eligible"
 
 
-def test_build_universe_ranks_by_liquidity_and_cuts_to_target_size():
-    index = trading_days(periods=120)
-    volumes = {"A": 9.0e6, "B": 8.0e6, "C": 7.0e6, "D": 6.0e6}
-    frames = {
-        ticker: make_ohlcv(index, seed=i, price0=100.0, volume=v)
-        for i, (ticker, v) in enumerate(volumes.items())
-    }
+def test_include_and_exclude_override_the_screen(real_frames):
+    start, end = "2018-01-01", "2018-12-31"
+    frames = real_frames(["AAPL", "NVR", "JPM"], start, end)
+    # NVR fails a $1B liquidity floor but is forced in; JPM passes but is banned.
+    config = _screen_config(min_avg_dollar_volume=1.0e9, include=["NVR"], exclude=["JPM"])
+    result = screen_candidates(frames, config, start=start, end=end, reference_days=251)
+    assert sorted(result.eligible) == ["AAPL", "NVR"]
+    assert result.report.loc["JPM", "status"] == "excluded"
+
+
+def test_build_universe_ranks_by_liquidity_and_cuts_to_target_size(real_frames):
+    start, end = "2018-01-01", "2018-12-31"
+    tickers = ["AAPL", "MSFT", "JPM", "XOM", "JNJ", "WMT"]
+    frames = real_frames(tickers, start, end)
     config = _screen_config(target_size=2)
-    start, end = str(index[0].date()), str(index[-1].date())
-    screen = screen_candidates(frames, config, start=start, end=end, reference_days=len(index))
+    screen = screen_candidates(frames, config, start=start, end=end, reference_days=251)
 
     universe = build_universe(screen, config, start=start, end=end)
 
+    liquidity = {t: float((f["close"] * f["volume"]).median()) for t, f in frames.items()}
+    top_two = sorted(liquidity, key=liquidity.get, reverse=True)[:2]
     assert universe.size == 2
-    assert set(universe.tickers) == {"A", "B"}
+    assert set(universe.tickers) == set(top_two)
     # Canonical ordering is alphabetical and stable.
+    assert universe.tickers == tuple(sorted(top_two))
+    assert universe.index(universe.tickers[1]) == 1
+
+
+def test_the_real_universe_is_the_liquid_top_224(real_dataset):
+    universe = real_dataset.universe
+    assert universe.size == 224
     assert universe.tickers == tuple(sorted(universe.tickers))
-    assert universe.index("B") == 1
+    assert "DHR" not in universe  # excluded in configs/us_sp500.yaml
+    assert universe.criteria["dropped_in_cleaning"] == ["CHTR"]
+    assert universe.criteria["refilled_from_reserve"] == ["WBD"]
 
 
-def test_universe_roundtrip_and_subset():
-    universe = Universe(
-        market="US",
-        benchmark="^GSPC",
-        tickers=("A", "B", "C"),
-        start="2015-01-01",
-        end="2020-01-01",
-    )
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "universe.json"
-        universe.save(path)
-        restored = Universe.load(path)
+def test_universe_roundtrip_and_subset(real_dataset, tmp_path):
+    universe = real_dataset.universe
+    path = tmp_path / "universe.json"
+    universe.save(path)
+    restored = Universe.load(path)
     assert restored.tickers == universe.tickers
-    assert restored.index_map == {"A": 0, "B": 1, "C": 2}
+    assert restored.index_map == {t: i for i, t in enumerate(universe.tickers)}
+    assert restored.criteria == dict(universe.criteria)
 
-    reduced = subset_universe(universe, ["C", "A"])
-    assert reduced.tickers == ("A", "C")
-    assert reduced.criteria["dropped_in_cleaning"] == ["B"]
+    keep = universe.tickers[::2]
+    reduced = subset_universe(universe, keep[::-1])
+    assert reduced.tickers == keep
+    assert reduced.criteria["dropped_in_cleaning"] == sorted(universe.tickers[1::2])

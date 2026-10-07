@@ -59,6 +59,8 @@ model:
   tcn_dilations: [1, 2]
   time_embedding_activation: sigmoid
   mlp_layers: 3
+  mlp_activation: silu
+  scale_by_sigma_x: false
 
 training:
   batch_size: 128

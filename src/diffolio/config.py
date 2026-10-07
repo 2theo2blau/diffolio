@@ -174,13 +174,15 @@ class ModelConfig:
 
 @dataclass
 class TrainingConfig:
-    """Sections 10-11 - consumed by later components."""
+    """Sections 10-11 - the objective and the training loop."""
 
     batch_size: int = 128
     learning_rate: float = 1.0e-3
     max_epochs: int = 400
     patience: int = 20
     aux_weight: float = 1.0  # lambda
+    # Optional (plan 10.4): max norm of the auxiliary gradient into z_merged.
+    aux_grad_clip: float | None = None
     seed: int = 0
 
 
@@ -286,6 +288,10 @@ class DiffolioConfig:
             raise ValueError("model.mlp_activation must be silu, relu or gelu")
         if self.model.mlp_layers < 2:
             raise ValueError("model.mlp_layers must be >= 2 (hidden width d, then d -> N)")
+        if self.training.aux_weight < 0:
+            raise ValueError("training.aux_weight must be >= 0")
+        if self.training.aux_grad_clip is not None and self.training.aux_grad_clip <= 0:
+            raise ValueError("training.aux_grad_clip must be positive or null")
         if self.diffusion.num_steps < 1:
             raise ValueError("diffusion.num_steps must be >= 1")
         if self.diffusion.beta_schedule not in ("linear", "cosine"):

@@ -184,6 +184,19 @@ class TrainingConfig:
     # Optional (plan 10.4): max norm of the auxiliary gradient into z_merged.
     aux_grad_clip: float | None = None
     seed: int = 0
+    #: Adam's learning rate decay per epoch; the paper specifies none.
+    lr_schedule: Literal["constant", "cosine"] = "constant"
+    #: Max global norm of all parameter gradients (None disables).
+    grad_clip: float | None = None
+    #: fp32 by default: at small t the noise (sigma_x * sqrt(1 - abar_t) ~ 6e-5)
+    #: is near bf16 rounding of O(1e-2) weights.  bf16/fp16 are opt-in.
+    precision: Literal["fp32", "bf16", "fp16"] = "fp32"
+    #: Validation scores every sample at every risk level, with this many
+    #: fixed (t, eps) draws each, re-used every epoch.
+    val_repeats: int = 4
+    #: The validation quantity behind checkpointing and early stopping:
+    #: ``total`` is L'' (plan 11.4), ``denoise`` the denoising MSE alone.
+    monitor: Literal["total", "denoise"] = "total"
 
 
 @dataclass
@@ -292,6 +305,21 @@ class DiffolioConfig:
             raise ValueError("training.aux_weight must be >= 0")
         if self.training.aux_grad_clip is not None and self.training.aux_grad_clip <= 0:
             raise ValueError("training.aux_grad_clip must be positive or null")
+        t = self.training
+        if t.batch_size < 1 or t.max_epochs < 1 or t.patience < 1:
+            raise ValueError("training.batch_size, max_epochs and patience must be >= 1")
+        if not t.learning_rate > 0:
+            raise ValueError("training.learning_rate must be positive")
+        if t.lr_schedule not in ("constant", "cosine"):
+            raise ValueError("training.lr_schedule must be 'constant' or 'cosine'")
+        if t.grad_clip is not None and t.grad_clip <= 0:
+            raise ValueError("training.grad_clip must be positive or null")
+        if t.precision not in ("fp32", "bf16", "fp16"):
+            raise ValueError("training.precision must be fp32, bf16 or fp16")
+        if t.val_repeats < 1:
+            raise ValueError("training.val_repeats must be >= 1")
+        if t.monitor not in ("total", "denoise"):
+            raise ValueError("training.monitor must be 'total' or 'denoise'")
         if self.diffusion.num_steps < 1:
             raise ValueError("diffusion.num_steps must be >= 1")
         if self.diffusion.beta_schedule not in ("linear", "cosine"):

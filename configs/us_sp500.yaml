@@ -75,3 +75,14 @@ training:
   precision: fp32         # bf16 / fp16 are opt-in, see config.py
   val_repeats: 4          # fixed (t, eps) draws per validation sample and risk level
   monitor: total          # L''; or denoise
+
+sampling:
+  num_samples: 50          # per (tau, gamma), as in the paper
+  covariance: rolling      # Sigma_hat from the look-up window's returns; or train
+  covariance_window: null  # null = L - 1 returns
+  shrinkage: ledoit_wolf
+  ridge: 0.0
+  guidance: true           # false = DF-nRG
+  guidance_scale: 1.0      # multiplies zeta; 1.0 is the paper
+  batch_size: 8            # decision steps per batch
+  seed: 0

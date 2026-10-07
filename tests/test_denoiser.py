@@ -15,13 +15,12 @@ import torch
 
 from diffolio.config import DiffolioConfig
 from diffolio.data.targets import portfolio_dataset
-from diffolio.diffusion import fit_schedule
 from diffolio.model import DenoisingHead, DiffolioModel, sinusoidal_embedding
 
 
 @pytest.fixture(scope="module")
-def schedule(real_dataset, real_targets):
-    return fit_schedule(real_dataset.config.diffusion, real_targets, real_dataset.splits.train)
+def schedule(real_schedule):
+    return real_schedule
 
 
 @pytest.fixture(scope="module")

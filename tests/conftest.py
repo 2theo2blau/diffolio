@@ -76,6 +76,14 @@ def real_targets(real_dataset):
 
 
 @pytest.fixture(scope="session")
+def real_schedule(real_dataset, real_targets):
+    """The section-7 schedule, with sigma_x fitted on the real training split."""
+    from diffolio.diffusion import fit_schedule
+
+    return fit_schedule(real_dataset.config.diffusion, real_targets, real_dataset.splits.train)
+
+
+@pytest.fixture(scope="session")
 def real_subpanel(real_dataset) -> Callable[..., "MarketPanel"]:  # noqa: F821
     """Factory for a small, writable ``MarketPanel`` cut from the real build.
 

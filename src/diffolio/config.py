@@ -159,13 +159,17 @@ class DiffusionConfig:
 
 @dataclass
 class ModelConfig:
-    """Sections 8-9 - consumed by later components."""
+    """Sections 8-9 - the encoder and denoising network."""
 
     hidden_dim: int = 128  # d_hid, the LSTM width (the only free width)
     tcn_kernel_size: int = 3
     tcn_dilations: list[int] = field(default_factory=lambda: [1, 2])
-    time_embedding_activation: Literal["sigmoid", "silu", "gelu"] = "sigmoid"
-    mlp_layers: int = 3
+    time_embedding_activation: Literal["sigmoid", "silu", "gelu"] = "sigmoid"  # omega_t
+    mlp_layers: int = 3  # linear layers in the head: (mlp_layers - 1) x width d, then d -> N
+    mlp_activation: Literal["silu", "relu", "gelu"] = "silu"
+    # Off by default (the paper's form).  On, the head reads x_t / sigma_x and
+    # returns sigma_x * MLP(.); see model/denoiser.py for why it is not the default.
+    scale_by_sigma_x: bool = False
 
 
 @dataclass
@@ -270,6 +274,18 @@ class DiffolioConfig:
             raise ValueError("data.start must precede data.end")
         if self.universe.target_size is not None and self.universe.target_size < 2:
             raise ValueError("universe.target_size must be >= 2")
+        if self.model.tcn_kernel_size < 1 or self.model.tcn_kernel_size % 2 != 1:
+            raise ValueError("model.tcn_kernel_size must be odd so 'same' padding preserves L")
+        if not self.model.tcn_dilations or min(self.model.tcn_dilations) < 1:
+            raise ValueError("model.tcn_dilations must be a non-empty list of positive ints")
+        if self.model.hidden_dim < 1:
+            raise ValueError("model.hidden_dim must be >= 1")
+        if self.model.time_embedding_activation not in ("sigmoid", "silu", "gelu"):
+            raise ValueError("model.time_embedding_activation must be sigmoid, silu or gelu")
+        if self.model.mlp_activation not in ("silu", "relu", "gelu"):
+            raise ValueError("model.mlp_activation must be silu, relu or gelu")
+        if self.model.mlp_layers < 2:
+            raise ValueError("model.mlp_layers must be >= 2 (hidden width d, then d -> N)")
         if self.diffusion.num_steps < 1:
             raise ValueError("diffusion.num_steps must be >= 1")
         if self.diffusion.beta_schedule not in ("linear", "cosine"):

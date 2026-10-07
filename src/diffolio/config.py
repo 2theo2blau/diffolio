@@ -31,6 +31,7 @@ __all__ = [
     "DiffusionConfig",
     "ModelConfig",
     "TrainingConfig",
+    "SamplingConfig",
     "DiffolioConfig",
 ]
 
@@ -200,6 +201,33 @@ class TrainingConfig:
 
 
 @dataclass
+class SamplingConfig:
+    """Section 12 - risk-guided sampling (Algorithm 2)."""
+
+    #: Portfolios sampled per (decision step, risk level); the paper uses 50.
+    num_samples: int = 50
+    #: Covariance Sigma_hat behind the proxy risk w^T Sigma_hat w.  ``rolling``
+    #: is estimated at each tau from the returns realised inside its look-up
+    #: window (plan 12.1 (b)); ``train`` is one matrix from the training split
+    #: (plan 12.1 (a)).
+    covariance: Literal["rolling", "train"] = "rolling"
+    #: Returns in the rolling window; ``None`` means L - 1, the returns
+    #: between the L opens of the look-up window.
+    covariance_window: int | None = None
+    #: ``ledoit_wolf`` shrinks towards a scaled identity; ``none`` keeps the
+    #: sample covariance.  Either way ``ridge`` is added to the diagonal.
+    shrinkage: Literal["ledoit_wolf", "none"] = "ledoit_wolf"
+    ridge: float = 0.0
+    #: Risk guidance (Eq. 20).  ``false`` gives the DF-nRG ablation (zeta = 0).
+    guidance: bool = True
+    #: Multiplies zeta^(gamma).  1.0 is the paper; tune only on validation.
+    guidance_scale: float = 1.0
+    #: Decision steps per sampling batch (each expands to G x num_samples).
+    batch_size: int = 8
+    seed: int = 0
+
+
+@dataclass
 class DiffolioConfig:
     name: str = "us_sp500"
     universe: UniverseConfig = field(default_factory=UniverseConfig)
@@ -210,6 +238,7 @@ class DiffolioConfig:
     diffusion: DiffusionConfig = field(default_factory=DiffusionConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    sampling: SamplingConfig = field(default_factory=SamplingConfig)
 
     # -- derived quantities -------------------------------------------------
     @property
@@ -320,6 +349,17 @@ class DiffolioConfig:
             raise ValueError("training.val_repeats must be >= 1")
         if t.monitor not in ("total", "denoise"):
             raise ValueError("training.monitor must be 'total' or 'denoise'")
+        sp = self.sampling
+        if sp.num_samples < 1 or sp.batch_size < 1:
+            raise ValueError("sampling.num_samples and sampling.batch_size must be >= 1")
+        if sp.covariance not in ("rolling", "train"):
+            raise ValueError("sampling.covariance must be 'rolling' or 'train'")
+        if sp.covariance_window is not None and sp.covariance_window < 2:
+            raise ValueError("sampling.covariance_window must be >= 2 or null")
+        if sp.shrinkage not in ("ledoit_wolf", "none"):
+            raise ValueError("sampling.shrinkage must be 'ledoit_wolf' or 'none'")
+        if sp.ridge < 0 or sp.guidance_scale < 0:
+            raise ValueError("sampling.ridge and sampling.guidance_scale must be >= 0")
         if self.diffusion.num_steps < 1:
             raise ValueError("diffusion.num_steps must be >= 1")
         if self.diffusion.beta_schedule not in ("linear", "cosine"):
